@@ -1,7 +1,7 @@
 {
-  "name": "@heimoshuiyu/opencode-goal-plugin",
-  "version": "2.0.0",
-  "description": "OpenCode plugin for autonomous goal-driven agent mode with budget control, independent verification, and lifecycle management",
+  "name": "opencode-autogoal",
+  "version": "1.0.0",
+  "description": "Autonomous goal-driven agent plugin for OpenCode with budget control, lifecycle management, and independent verification",
   "main": "./src/index.ts",
   "type": "module",
   "exports": {
@@ -26,6 +26,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/heimoshuiyu/opencode-goal-plugin.git"
+    "url": "git+https://github.com/fuhongtao1010-oss/opencode-autogoal.git"
   }
 }

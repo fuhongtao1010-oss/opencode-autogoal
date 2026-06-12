@@ -1,4 +1,4 @@
-# OpenCode Goal Plugin
+# opencode-autogoal
 
 基于 [OpenCode](https://opencode.ai) 的自主目标驱动插件，支持预算控制、生命周期管理和独立完成验证。
 
@@ -19,8 +19,14 @@
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@heimoshuiyu/opencode-goal-plugin"]
+  "plugin": ["opencode-autogoal"]
 }
+```
+
+或命令行安装：
+
+```bash
+opencode plugin opencode-autogoal
 ```
 
 OpenCode 下次启动时自动安装。

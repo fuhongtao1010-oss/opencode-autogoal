@@ -1,24 +1,26 @@
+// Goal 状态：active=活跃, paused=用户暂停, blocked=系统阻塞(预算耗尽/错误), complete=完成
 export type GoalStatus = "active" | "paused" | "blocked" | "complete"
 
 export interface GoalBudget {
-  turnBudget?: number
-  wallClockBudgetMs?: number
+  turnBudget?: number        // 最大自主续跑轮次
+  wallClockBudgetMs?: number // 最大挂钟时间(毫秒)
 }
 
 export interface GoalData {
   id: string
   objective: string
-  completionCriterion: string
+  completionCriterion: string  // 完成标准 — 必须是可验证的具体条件
   status: GoalStatus
-  continuationCount: number
-  wallClockStartedAt: number
-  wallClockAccumulatedMs: number
+  continuationCount: number    // 已续跑次数
+  wallClockStartedAt: number   // 当前轮开始时间戳(用于计算增量)
+  wallClockAccumulatedMs: number // 已累积挂钟时间(不含当前轮)
   budget: GoalBudget
   createdAt: number
   updatedAt: number
-  terminalReason?: string
+  terminalReason?: string      // blocked 时的原因
 }
 
+// 硬安全上限：最多续跑 50 轮，防止无限循环
 export const MAX_CONTINUATIONS = 50
 
 export function createGoal(
@@ -41,8 +43,9 @@ export function createGoal(
   }
 }
 
+// 状态机：检查能否从当前状态迁移到目标状态
 export function canTransition(goal: GoalData, newStatus: GoalStatus): boolean {
-  if (goal.status === "complete") return false
+  if (goal.status === "complete") return false // complete 是终态
   switch (newStatus) {
     case "active":
       return goal.status === "paused" || goal.status === "blocked"
@@ -57,6 +60,7 @@ export function canTransition(goal: GoalData, newStatus: GoalStatus): boolean {
   }
 }
 
+// 获取当前总挂钟时间(含当前轮正在运行的时间)
 export function getWallClockMs(goal: GoalData): number {
   if (goal.status === "active") {
     return goal.wallClockAccumulatedMs + (Date.now() - goal.wallClockStartedAt)
@@ -64,6 +68,7 @@ export function getWallClockMs(goal: GoalData): number {
   return goal.wallClockAccumulatedMs
 }
 
+// 检查是否超预算，返回原因字符串或 null
 export function isOverBudget(goal: GoalData): string | null {
   if (goal.budget.turnBudget && goal.continuationCount >= goal.budget.turnBudget) {
     return `Turn budget exhausted (${goal.continuationCount}/${goal.budget.turnBudget})`
@@ -89,6 +94,7 @@ export function formatDuration(ms: number): string {
   return `${hours}h ${mins}m`
 }
 
+// 格式化 goal 信息供模型读取
 export function formatGoalForModel(goal: GoalData): string {
   const wallMs = getWallClockMs(goal)
   const lines = [

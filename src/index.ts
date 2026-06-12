@@ -17,6 +17,10 @@ import {
   formatGoalForModel,
 } from "./goal"
 
+// ─── Session metadata 读写 ───────────────────────────────────────────
+// Goal 状态存储在 session.metadata.goal 中，依赖 OpenCode 的 SQLite 持久化。
+// readGoal 从指定 session 读取 goal，writeGoal 合并写入。
+
 async function readGoal(
   client: ReturnType<typeof createOpencodeClient>,
   sessionID: string,
@@ -57,6 +61,10 @@ async function getSession(
   }
 }
 
+// ─── 子 agent 判断 & 目标 session ID ─────────────────────────────────
+// 子 agent session 有 parentID，目标 session 是父 session
+// 主 session 则操作自己的 session
+
 function isSubAgent(session: Session | null): boolean {
   return !!session?.parentID
 }
@@ -64,6 +72,9 @@ function isSubAgent(session: Session | null): boolean {
 function targetSessionID(session: Session | null): string {
   return session?.parentID ?? session?.id ?? ""
 }
+
+// ─── 插件入口 ─────────────────────────────────────────────────────────
+// 复用 V1 client 的 HTTP 配置创建 V2 SDK client，以获得 Session.metadata 等类型
 
 const serverPlugin: Plugin = async (input: PluginInput): Promise<Hooks> => {
   const v1Client = (input.client as any)._client
@@ -74,9 +85,18 @@ const serverPlugin: Plugin = async (input: PluginInput): Promise<Hooks> => {
     fetch: v1Config.fetch,
   })
 
+  // ── 中断追踪（内存标记） ─────────────────────────────────────────
+  // 用户按 Esc 时，OpenCode 依次发出：
+  //   1. session.error (MessageAbortedError) → 加入 abortedSessions
+  //   2. session.status idle → 检查 Set，有则暂停 goal
+  // 利用 error 先于 idle 的时序保证，避免原版 TOCTOU 竞态
+
   const abortedSessions = new Set<string>()
+  // 续跑去重：防止 idle 事件快速重复触发
   const inFlight = new Set<string>()
 
+  // ── 暂停已中断的 goal ─────────────────────────────────────────────
+  // 检查 abortedSessions Set，有则暂停并累计挂钟时间
   async function pauseOnAbort(sessionID: string) {
     if (!abortedSessions.has(sessionID)) return
     abortedSessions.delete(sessionID)
@@ -87,6 +107,11 @@ const serverPlugin: Plugin = async (input: PluginInput): Promise<Hooks> => {
     await writeGoal(client, sessionID, goal)
   }
 
+  // ── 自主续跑 ─────────────────────────────────────────────────────
+  // session idle 时触发：
+  // 1. 检查是否被中断 → 暂停
+  // 2. 检查 budget → 超限则 blocked
+  // 3. 递增轮次计数 → promptAsync 发送续跑指令
   async function queueContinuation(sessionID: string) {
     if (inFlight.has(sessionID)) return
     inFlight.add(sessionID)
@@ -120,6 +145,12 @@ const serverPlugin: Plugin = async (input: PluginInput): Promise<Hooks> => {
       inFlight.delete(sessionID)
     }
   }
+
+  // ── 4 个工具注册 ─────────────────────────────────────────────────
+  // create_goal: 创建新 goal（仅主 session）
+  // get_goal: 读取 goal 状态（主 + 子 agent）
+  // update_goal: 变更状态（子 agent 只能 complete 父 session 的 goal）
+  // set_goal_budget: 设置预算上限（仅主 session）
 
   const createGoalTool = tool({
     description: `Create a new goal for the current session. Requires objective and completion_criterion. Optionally set turn or wall-clock budget limits. Use this when entering goal mode via /goal or when user asks for autonomous multi-turn work.`,
@@ -287,6 +318,13 @@ ${formatGoalForModel(goal)}`
     },
   })
 
+  // ── 注册 hooks ───────────────────────────────────────────────────
+  // tool: 4 个工具
+  // config: 注入 /goal 命令模板 + goal-verify 子 agent
+  // chat.message: 为 goal-verify 子 agent 的消息注入目标上下文
+  // command.execute.before: /goal 子命令路由 + 模板标记 synthetic
+  // event: 中断追踪、自主续跑、用户消息重置轮次计数
+
   return {
     tool: {
       create_goal: createGoalTool,
@@ -407,7 +445,7 @@ ${formatGoalForModel(goal)}`
 }
 
 const pluginModule: PluginModule = {
-  id: "opencode-goal-plugin",
+  id: "opencode-autogoal",
   server: serverPlugin,
 }
 

@@ -1,5 +1,8 @@
 import type { GoalData } from "./goal"
 
+// ─── /goal 命令模板 ───────────────────────────────────────────────
+// 通过 config hook 注入，$ARGUMENTS 会被用户输入替换
+// 标记为 synthetic（用户不可见，仅 LLM 可见）
 export const GOAL_COMMAND_TEMPLATE = `You are entering Goal Mode. Work autonomously to achieve the following objective:
 
 **Objective**: $ARGUMENTS
@@ -25,7 +28,9 @@ Instructions:
 
 Begin now by creating the goal (with both \`objective\` and \`completion_criterion\`), then work autonomously.`
 
-export const VERIFY_AGENT_PROMPT = `You are an independent goal verification agent. Your ONLY job is to determine whether a goal has been fully achieved by inspecting the current state of the codebase.
+// ─── goal-verify 子 agent 系统提示 ────────────────────────────────
+// 独立验证 agent，只读，从零检查代码库状态
+// 验证维度：完整性、正确性、集成性、健壮性
 
 You start with a FRESH context — do not assume any prior work was done correctly. You must verify everything from scratch.
 
@@ -112,6 +117,9 @@ First step: Call \`get_goal()\` to retrieve the objective and completion criteri
 
 Do not create or modify any files. You are a read-only verifier.`
 
+// ─── 子 agent 消息注入 ─────────────────────────────────────────────
+// chat.message hook 中调用，将父 session 的 goal 上下文注入到 goal-verify
+// 子 agent 的用户消息中，让它知道要验证什么
 export function subagentGoalContext(
   objective: string,
   completionCriterion: string,
@@ -131,6 +139,9 @@ ${originalPrompt}
 </extra_context>`
 }
 
+// ─── 续跑 prompt ──────────────────────────────────────────────────
+// session idle 时通过 promptAsync 发送给模型，包含目标 + 完成标准 + 预算信息
+// 不含用户可见的文本，标记为 synthetic
 export function continuationPrompt(goal: GoalData): string {
   const wallMs = goal.status === "active"
     ? goal.wallClockAccumulatedMs + (Date.now() - goal.wallClockStartedAt)

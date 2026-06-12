@@ -1,4 +1,4 @@
-# OpenCode Goal Plugin
+# opencode-autogoal
 
 An [OpenCode](https://opencode.ai) plugin that enables autonomous goal-driven agent mode with budget control, lifecycle management, and independent completion verification.
 
@@ -19,7 +19,7 @@ An [OpenCode](https://opencode.ai) plugin that enables autonomous goal-driven ag
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@heimoshuiyu/opencode-goal-plugin"]
+  "plugin": ["opencode-autogoal"]
 }
 ```
 
@@ -102,7 +102,7 @@ User: /goal <objective>
 
 ## What's new in v2
 
-| Improvement | v1 | v2 |
+## What's new in v2
 |-------------|----|----|
 | Tools | 1 tool with `op` param | 4 dedicated tools |
 | States | active / paused / complete | + `blocked` state |
