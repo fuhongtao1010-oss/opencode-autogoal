@@ -1,75 +1,79 @@
 # opencode-autogoal
 
-An [OpenCode](https://opencode.ai) plugin that enables autonomous goal-driven agent mode with budget control, lifecycle management, and independent completion verification.
+基于 [OpenCode](https://opencode.ai) 的自主目标驱动插件，支持预算控制、生命周期管理和独立完成验证。
 
-## Features
+An [OpenCode](https://opencode.ai) plugin for autonomous goal-driven agent mode with budget control, lifecycle management, and independent verification.
 
-- **4 dedicated tools** — `create_goal`, `get_goal`, `update_goal`, `set_goal_budget` instead of a single multiplexed tool
-- **4-state lifecycle** — `active` → `paused` / `blocked` / `complete`, plus `cancelled` for discard
-- **Budget control** — optional turn cap and wall-clock cap; auto-`blocked` when exceeded
-- **Hard safety limit** — 50-turn maximum prevents runaway loops regardless of budget
-- **Independent verification** — `goal-verify` sub-agent inspects the codebase from scratch before marking complete
-- **Interrupt auto-pause** — Press `Esc` during execution pauses the goal
-- **Session persistence** — Goal state stored in `Session.metadata` (SQLite), survives restarts
-- **Sub-agent permission isolation** — Sub-agents can only `get` and `complete` the parent's goal
-- **`/goal` subcommands** — `/goal pause`, `/goal resume`, `/goal cancel`, `/goal status`
+---
 
-## Setup
+## 特性 / Features
+
+- **4 个独立工具** / 4 dedicated tools — `create_goal`、`get_goal`、`update_goal`、`set_goal_budget`
+- **4 态生命周期** / 4-state lifecycle — `active` → `paused` / `blocked` / `complete`，外加 `cancelled`
+- **预算控制** / Budget control — 可选 turn + 挂钟时间上限，超限自动 `blocked`
+- **安全上限** / Safety limit — 50 轮硬限制，防止无限循环
+- **独立验证** / Independent verification — `goal-verify` 子 agent 从零检查代码库后才标记完成
+- **中断自动暂停** / Interrupt auto-pause — 按 `Esc` 自动暂停 goal
+- **持久化** / Persistence — 状态存在 `Session.metadata` (SQLite)，重启不丢失
+- **子 agent 权限隔离** / Permission isolation — 子 agent 只能 `get` 和 `complete` 父 session 的 goal
+- **`/goal` 子命令** / Subcommands — `/goal pause`、`/goal resume`、`/goal cancel`、`/goal status`
+
+## 安装 / Setup
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
   "plugin": ["opencode-autogoal"]
 }
 ```
 
-OpenCode automatically installs the plugin on next run.
+或命令行安装 / or via CLI: `opencode plugin opencode-autogoal`
 
-## Usage
+## 使用 / Usage
 
-### Start a goal
+### 启动 goal / Start a goal
 
 ```
+/goal 将认证模块重构为 JWT 方案
 /goal Refactor the authentication module to use JWT tokens
 ```
 
-The agent creates a goal with your objective and a completion criterion, then works autonomously.
+agent 创建 goal 后自主工作，完成后调用 goal-verify 子 agent 独立验证。
 
-### Tools
+### 工具 / Tools
 
-| Tool | Description |
-|------|-------------|
-| `create_goal` | Create a new goal. Requires `objective` + `completion_criterion`. Optional `turn_budget`, `wall_clock_budget_ms`. |
-| `get_goal` | Return current goal state (status, turns, wall clock, budget). |
-| `update_goal` | Change goal status: `complete`, `paused`, `blocked` (requires reason), `active` (resume), `cancelled`. |
-| `set_goal_budget` | Set budget limits on an active goal. |
+| 工具 / Tool | 说明 / Description |
+|-------------|-------------------|
+| `create_goal` | 创建新 goal。需 `objective` + `completion_criterion`。可选 `turn_budget`、`wall_clock_budget_ms`。 |
+| `get_goal` | 查看当前 goal 状态（状态、轮次、耗时、预算）。 |
+| `update_goal` | 变更状态：`complete` / `paused` / `blocked`(需reason) / `active`(恢复) / `cancelled` |
+| `set_goal_budget` | 设置活跃 goal 的预算上限。 |
 
-### Completion verification
+### 完成验证 / Completion verification
 
-When the agent calls `update_goal({status:"complete"})`, it is **blocked** in the main session. The agent must launch the `goal-verify` sub-agent via the Task tool. The sub-agent independently inspects the codebase — reads files, runs tests, checks integrations — and only marks the goal complete if all requirements are satisfied.
+主 session 调 `update_goal({status:"complete"})` 时被**阻止**，必须通过 Task 工具启动 `goal-verify` 子 agent。子 agent 独立检查代码库实际状态，全部满足才标记完成。
 
-### `/goal` subcommands
+### `/goal` 子命令 / Subcommands
 
-| Command | Effect |
-|---------|--------|
-| `/goal` | Start a new goal |
-| `/goal pause` | Pause active goal |
-| `/goal resume` | Resume paused/blocked goal |
-| `/goal cancel` | Discard current goal |
-| `/goal status` | Show current goal state |
+| 命令 | 效果 |
+|------|------|
+| `/goal` | 启动新 goal |
+| `/goal pause` | 暂停活跃 goal |
+| `/goal resume` | 恢复已暂停/阻塞的 goal |
+| `/goal cancel` | 丢弃当前 goal |
+| `/goal status` | 查看当前 goal 状态 |
 
-### Budget example
+### 预算示例 / Budget example
 
 ```
+/goal 优化数据库查询，限制 5 轮
 /goal Optimize database queries with a 5-turn budget
 
-The agent will:
-1. Create the goal with turn_budget=5
-2. Work autonomously for up to 5 continuation turns
-3. Auto-block when the budget is exhausted
+1. 创建带 turn_budget=5 的 goal
+2. 自主工作最多 5 个续跑轮次
+3. 预算耗尽后自动 blocked
 ```
 
-## Architecture
+## 架构 / Architecture
 
 ```
 User: /goal <objective>
@@ -77,8 +81,8 @@ User: /goal <objective>
   ▼
 ┌──────────────────────────────────────────────┐
 │  Turn 1                                      │
-│  - create_goal({objective, completion_criterion, budget?}) │
-│  - Works autonomously (read, edit, bash...)  │
+│  - create_goal({...})                        │
+│  - Works autonomously                        │
 └──────────────┬───────────────────────────────┘
                │  session.status → idle
                ▼
@@ -87,31 +91,30 @@ User: /goal <objective>
 │  1. Checks goal is active                    │
 │  2. Checks budget (turn/wall/max)            │
 │  3. Increments continuationCount             │
-│  4. client.promptAsync(continuationPrompt)   │
+│  4. promptAsync(continuationPrompt)          │
 └──────────────┬───────────────────────────────┘
-               │
-               ▼  (loops until done)
+               │  (loops until done)
+               ▼
 ┌──────────────────────────────────────────────┐
-│  Agent calls update_goal({status:"complete"}) │
+│  update_goal({status:"complete"})            │
 │  → BLOCKED: use goal-verify sub-agent        │
 │  → Sub-agent verifies independently          │
-│  → If verified: goal marked complete         │
-│  → If not: agent keeps working               │
+│  → If verified: complete                     │
 └──────────────────────────────────────────────┘
 ```
 
-## What's new in v2
+## v2 改进 / What's new in v2
 
-## What's new in v2
-|-------------|----|----|
-| Tools | 1 tool with `op` param | 4 dedicated tools |
-| States | active / paused / complete | + `blocked` state |
-| Budget | None | Turn + wall-clock budget |
-| Safety limit | None | Hard 50-turn cap |
-| `/goal pause/resume/cancel` | Handled by model | Built-in subcommand routing |
-| Concurrency guard | None | `inFlight` dedup |
-| `complete` blocking | Throws Error | Returns guided message |
+| 改进项 | v1 | v2 |
+|--------|----|----|
+| 工具 / Tools | 1 个 + `op` 参数 | 4 个独立工具 |
+| 状态 / States | active / paused / complete | + `blocked` 状态 |
+| 预算 / Budget | 无 | Turn + 挂钟时间预算 |
+| 安全上限 / Safety | 无 | 50 轮硬限制 |
+| `/goal` 子命令 | 模型自行处理 | 内置子命令路由 |
+| 并发防护 / Guard | 无 | `inFlight` 去重 |
+| complete 阻塞 | 抛 Error | 返回引导信息 |
 
-## License
+## 许可证 / License
 
 MIT
