@@ -1,0 +1,31 @@
+{
+  "name": "@heimoshuiyu/opencode-goal-plugin",
+  "version": "2.0.0",
+  "description": "OpenCode plugin for autonomous goal-driven agent mode with budget control, independent verification, and lifecycle management",
+  "main": "./src/index.ts",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "echo 'No build needed - OpenCode loads .ts directly'"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "*",
+    "@opencode-ai/sdk": "^2.0.0"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "goal",
+    "autonomous",
+    "agent",
+    "budget"
+  ],
+  "author": "heimoshuiyu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/heimoshuiyu/opencode-goal-plugin.git"
+  }
+}
