@@ -2,6 +2,8 @@ import type { Plugin, PluginModule, PluginInput, Hooks, ToolContext, ToolResult 
 import { tool } from "@opencode-ai/plugin/tool"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import type { Session } from "@opencode-ai/sdk/v2"
+import { exec } from "child_process"
+import { promisify } from "util"
 import {
   GOAL_COMMAND_TEMPLATE,
   VERIFY_AGENT_PROMPT,
@@ -16,6 +18,8 @@ import {
   isOverBudget,
   formatGoalForModel,
 } from "./goal"
+
+const execAsync = promisify(exec)
 
 // ─── Session metadata 读写 ───────────────────────────────────────────
 // Goal 状态存储在 session.metadata.goal 中，依赖 OpenCode 的 SQLite 持久化。
@@ -111,7 +115,8 @@ const serverPlugin: Plugin = async (input: PluginInput): Promise<Hooks> => {
   // session idle 时触发：
   // 1. 检查是否被中断 → 暂停
   // 2. 检查 budget → 超限则 blocked
-  // 3. 递增轮次计数 → promptAsync 发送续跑指令
+  // 3. 运行验证命令（如有）→ 成功则自动完成，失败则附加状态
+  // 4. 递增轮次计数 → promptAsync 发送续跑指令
   async function queueContinuation(sessionID: string) {
     if (inFlight.has(sessionID)) return
     inFlight.add(sessionID)
@@ -127,6 +132,42 @@ const serverPlugin: Plugin = async (input: PluginInput): Promise<Hooks> => {
         goal.terminalReason = over
         await writeGoal(client, sessionID, goal)
         return
+      }
+
+      // 如果设置了验证命令，运行它
+      if (goal.verificationCommand) {
+        try {
+          const { stdout } = await execAsync(goal.verificationCommand, { timeout: 30_000 })
+          // 命令退出码 0 → 目标达成
+          goal.status = "complete"
+          goal.wallClockAccumulatedMs += Date.now() - goal.wallClockStartedAt
+          await writeGoal(client, sessionID, goal)
+          await client.session.promptAsync({
+            sessionID,
+            parts: [{
+              type: "text" as const,
+              text: `✅ Goal achieved!\n\nObjective: ${goal.objective}\n\nVerification command exited 0.\n${(stdout || "").slice(0, 500)}`,
+              synthetic: true,
+            }],
+          })
+          return
+        } catch (e: any) {
+          // 命令失败 → 目标尚未达成，附加状态到续跑 prompt
+          const exitCode = e.code !== undefined ? e.code : (e.status ?? "?")
+          const errorOutput = (e.stderr || e.stdout || e.message || "").slice(0, 500)
+          const verificationStatus = `[GOAL] Not yet met (exit ${exitCode}): ${errorOutput}`
+          goal.continuationCount++
+          await writeGoal(client, sessionID, goal)
+          await client.session.promptAsync({
+            sessionID,
+            parts: [{
+              type: "text" as const,
+              text: continuationPrompt(goal, verificationStatus),
+              synthetic: true,
+            }],
+          })
+          return
+        }
       }
 
       goal.continuationCount++
@@ -153,12 +194,13 @@ const serverPlugin: Plugin = async (input: PluginInput): Promise<Hooks> => {
   // set_goal_budget: 设置预算上限（仅主 session）
 
   const createGoalTool = tool({
-    description: `Create a new goal for the current session. Requires objective and completion_criterion. Optionally set turn or wall-clock budget limits. Use this when entering goal mode via /goal or when user asks for autonomous multi-turn work.`,
+    description: `Create a new goal for the current session. Requires objective and completion_criterion. Optionally set turn or wall-clock budget limits, or a shell command for automatic verification. Use this when entering goal mode via /goal or when user asks for autonomous multi-turn work.`,
     args: {
       objective: tool.schema.string().describe("The goal objective - what needs to be achieved"),
       completion_criterion: tool.schema.string().describe("Concrete, checkable conditions that prove the goal is done"),
       turn_budget: tool.schema.number().optional().describe("Maximum number of autonomous continuation turns"),
       wall_clock_budget_ms: tool.schema.number().optional().describe("Maximum wall clock time in milliseconds"),
+      verification_command: tool.schema.string().optional().describe("Shell command that exits 0 when the goal is met. Run periodically to auto-check progress."),
     },
     async execute(args, ctx: ToolContext): Promise<ToolResult> {
       const session = await getSession(client, ctx.sessionID)
@@ -177,7 +219,7 @@ const serverPlugin: Plugin = async (input: PluginInput): Promise<Hooks> => {
       if (args.turn_budget) budget.turnBudget = args.turn_budget
       if (args.wall_clock_budget_ms) budget.wallClockBudgetMs = args.wall_clock_budget_ms
 
-      const goal = createGoal(args.objective, args.completion_criterion, budget)
+      const goal = createGoal(args.objective, args.completion_criterion, budget, args.verification_command)
       await writeGoal(client, ctx.sessionID, goal)
       return `Goal created successfully.
 
@@ -355,15 +397,40 @@ ${formatGoalForModel(goal)}`
     },
 
     async "chat.message"(input, output) {
-      if (input.agent !== "goal-verify") return
+      // 检测模型输出中的 GOAL_COMPLETE / GOAL_BLOCKED 标记
       const session = await getSession(client, input.sessionID)
-      if (!session?.parentID) return
-      const goal = await readGoal(client, session.parentID)
-      if (!goal) return
+      const target = targetSessionID(session)
+      const goal = target ? await readGoal(client, target) : null
+      if (goal) {
+        for (const part of output.parts) {
+          if (part.type !== "text") continue
+          const text = (part as any).text || ""
+          const completeMatch = text.match(/GOAL_COMPLETE:\s*(.+)/)
+          if (completeMatch && goal.status === "active") {
+            goal.status = "complete"
+            goal.wallClockAccumulatedMs += Date.now() - goal.wallClockStartedAt
+            await writeGoal(client, target!, goal)
+            break
+          }
+          const blockedMatch = text.match(/GOAL_BLOCKED:\s*(.+)/)
+          if (blockedMatch && goal.status === "active") {
+            goal.status = "blocked"
+            goal.wallClockAccumulatedMs += Date.now() - goal.wallClockStartedAt
+            goal.terminalReason = blockedMatch[1].trim()
+            await writeGoal(client, target!, goal)
+            break
+          }
+        }
+      }
 
+      // goal-verify 子 agent：注入父 session 的 goal 上下文
+      if (input.agent !== "goal-verify") return
+      if (!session?.parentID) return
+      const parentGoal = await readGoal(client, session.parentID)
+      if (!parentGoal) return
       for (const part of output.parts) {
         if (part.type === "text" && (part as any).text) {
-          (part as any).text = subagentGoalContext(goal.objective, goal.completionCriterion, (part as any).text)
+          (part as any).text = subagentGoalContext(parentGoal.objective, parentGoal.completionCriterion, (part as any).text)
         }
       }
     },
@@ -400,6 +467,57 @@ ${formatGoalForModel(goal)}`
         return
       }
 
+      if (normalized === "help") {
+        output.parts = [{
+          type: "text" as const,
+          text: `Available /goal subcommands:
+  /goal <description> — Set a new goal with a description
+  /goal pause — Pause the current goal
+  /goal resume — Resume a paused or blocked goal
+  /goal cancel — Cancel the current goal
+  /goal status — Check current goal status
+  /goal budget <N>min [<N>turns] — Set budget limits (e.g. "30min 10turns")
+  /goal help — Show this help`,
+        }]
+        return
+      }
+
+      if (normalized.startsWith("budget")) {
+        const budgetArgs = args.slice("budget".length).trim()
+        const turnMatch = budgetArgs.match(/(\d+)\s*t(?:urn)?s?\b/i)
+        const wallMatch = budgetArgs.match(/(\d+)\s*m(?:in(?:ute)?s?)?\b/i)
+        const parts: string[] = []
+        if (wallMatch) parts.push(`wall_clock_budget_ms: ${parseInt(wallMatch[1]) * 60 * 1000}`)
+        if (turnMatch) parts.push(`turn_budget: ${parseInt(turnMatch[1])}`)
+        if (parts.length === 0) {
+          output.parts = [{
+            type: "text" as const,
+            text: `Usage: /goal budget <N>min [<N>turns]
+Examples:
+  /goal budget 30min         — 30 minute wall clock limit
+  /goal budget 10turns       — 10 turn limit
+  /goal budget 30min 10turns — both limits`,
+          }]
+        } else {
+          output.parts = [{
+            type: "text" as const,
+            text: `The user requested budget: ${parts.join(", ")}. Call set_goal_budget() with these values to apply the new limits.`,
+            synthetic: true,
+          }]
+        }
+        return
+      }
+
+      if (!args) {
+        output.parts = [{
+          type: "text" as const,
+          text: `🎯 Goal mode. Describe what you want the agent to achieve autonomously.
+Available subcommands: pause, resume, cancel, status, budget <N>min [<N>turns], help`,
+          synthetic: true,
+        }]
+        return
+      }
+
       for (const part of output.parts) {
         if (part.type === "text") {
           (part as any).synthetic = true
@@ -407,7 +525,7 @@ ${formatGoalForModel(goal)}`
       }
       output.parts.unshift({
         type: "text" as const,
-        text: args ? `🎯 ${args}` : "🎯 Starting goal mode",
+        text: `🎯 ${args}`,
       })
     },
 

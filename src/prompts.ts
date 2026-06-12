@@ -142,7 +142,7 @@ ${originalPrompt}
 // ─── 续跑 prompt ──────────────────────────────────────────────────
 // session idle 时通过 promptAsync 发送给模型，包含目标 + 完成标准 + 预算信息
 // 不含用户可见的文本，标记为 synthetic
-export function continuationPrompt(goal: GoalData): string {
+export function continuationPrompt(goal: GoalData, verificationStatus?: string): string {
   const wallMs = goal.status === "active"
     ? goal.wallClockAccumulatedMs + (Date.now() - goal.wallClockStartedAt)
     : goal.wallClockAccumulatedMs
@@ -159,6 +159,19 @@ export function continuationPrompt(goal: GoalData): string {
     budgetLine = `<budget>\n${parts.join(", ")}\n</budget>\n`
   }
 
+  let urgencyLine = ""
+  if (goal.budget.turnBudget && goal.continuationCount >= goal.budget.turnBudget * 0.8) {
+    const remaining = goal.budget.turnBudget - goal.continuationCount
+    urgencyLine += `\n⚠️ Only ${remaining} turn(s) remaining in budget.\n`
+  }
+  if (goal.budget.wallClockBudgetMs && wallMs >= goal.budget.wallClockBudgetMs * 0.8) {
+    const remainingMs = goal.budget.wallClockBudgetMs - wallMs
+    const remainingSecs = Math.round(remainingMs / 1000)
+    urgencyLine += `\n⚠️ Only ${remainingSecs}s remaining in wall clock budget.\n`
+  }
+
+  const verificationBlock = verificationStatus ? `\n\n${verificationStatus}` : ""
+
   return `Continue working toward the active goal.
 
 <objective>
@@ -169,11 +182,11 @@ ${goal.objective}
 ${goal.completionCriterion}
 </completion_criterion>
 
-${budgetLine}Keep the full objective intact. Do not redefine success around a smaller or easier task.
+${budgetLine}${urgencyLine}Keep the full objective intact. Do not redefine success around a smaller or easier task.
 
 Work from evidence — inspect the current state before relying on anything. Improve, replace, or remove existing work as needed.
 
 Do not substitute a narrower or easier solution just because it is more likely to pass current tests. Optimize for movement toward the requested end state.
 
-If the work is not done, just keep working. Do not narrate that you are continuing — execute.`
+If the work is not done, just keep working. Do not narrate that you are continuing — execute.${verificationBlock}`
 }

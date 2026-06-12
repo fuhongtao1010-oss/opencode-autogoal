@@ -18,6 +18,7 @@ export interface GoalData {
   createdAt: number
   updatedAt: number
   terminalReason?: string      // blocked 时的原因
+  verificationCommand?: string // 可选 shell 命令，定期执行来检查目标是否达成
 }
 
 // 硬安全上限：最多续跑 50 轮，防止无限循环
@@ -27,6 +28,7 @@ export function createGoal(
   objective: string,
   completionCriterion: string,
   budget?: GoalBudget,
+  verificationCommand?: string,
 ): GoalData {
   const now = Date.now()
   return {
@@ -40,6 +42,7 @@ export function createGoal(
     budget: budget ?? {},
     createdAt: now,
     updatedAt: now,
+    verificationCommand: verificationCommand?.trim() || undefined,
   }
 }
 
@@ -115,6 +118,9 @@ export function formatGoalForModel(goal: GoalData): string {
     lines.push(`Budget status: EXCEEDED - ${over}`)
   } else if (goal.budget.turnBudget || goal.budget.wallClockBudgetMs) {
     lines.push(`Budget status: within budget`)
+  }
+  if (goal.verificationCommand) {
+    lines.push(`Verification: ${goal.verificationCommand}`)
   }
   if (goal.terminalReason) {
     lines.push(`Reason: ${goal.terminalReason}`)
