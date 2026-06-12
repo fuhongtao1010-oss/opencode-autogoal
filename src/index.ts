@@ -11,13 +11,10 @@ import {
 import {
   type GoalData,
   type GoalBudget,
-  type GoalStatus,
   createGoal,
   canTransition,
   isOverBudget,
-  getWallClockMs,
   formatGoalForModel,
-  formatDuration,
 } from "./goal"
 
 async function readGoal(
@@ -335,15 +332,44 @@ ${formatGoalForModel(goal)}`
 
     async "command.execute.before"(input, output) {
       if (input.command !== "goal") return
+      const args = input.arguments?.trim() || ""
+
+      const lifecycleSubcommands: Record<string, string> = {
+        pause: "paused",
+        resume: "active",
+        cancel: "cancelled",
+        status: "status",
+      }
+      const normalized = args.toLowerCase()
+      if (normalized in lifecycleSubcommands) {
+        const targetStatus = lifecycleSubcommands[normalized]
+        if (targetStatus === "status") {
+          output.parts = [{
+            type: "text" as const,
+            text: "Retrieve the current goal status by calling get_goal().",
+          }]
+        } else if (targetStatus === "cancelled") {
+          output.parts = [{
+            type: "text" as const,
+            text: `The user requested to cancel the current goal. Call update_goal({status:"cancelled"}) to discard it.`,
+          }]
+        } else {
+          output.parts = [{
+            type: "text" as const,
+            text: `The user requested to ${normalized} the current goal. Call update_goal({status:"${targetStatus}"}).`,
+          }]
+        }
+        return
+      }
+
       for (const part of output.parts) {
         if (part.type === "text") {
           (part as any).synthetic = true
         }
       }
-      const objective = input.arguments?.trim()
       output.parts.unshift({
         type: "text" as const,
-        text: objective ? `🎯 ${objective}` : "🎯 Starting goal mode",
+        text: args ? `🎯 ${args}` : "🎯 Starting goal mode",
       })
     },
 
