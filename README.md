@@ -20,13 +20,19 @@ An [OpenCode](https://opencode.ai) plugin for autonomous goal-driven agent mode 
 
 ## 安装 / Setup
 
+本地安装（推荐）/ Install from local path:
+
 ```json
 {
-  "plugin": ["opencode-autogoal"]
+  "plugin": ["/path/to/opencode-goal-plugin"]
 }
 ```
 
-或命令行安装 / or via CLI: `opencode plugin opencode-autogoal`
+或从 GitHub 安装 / or from GitHub:
+
+```
+opencode plugin https://github.com/fuhongtao1010-oss/opencode-autogoal
+```
 
 ## 使用 / Usage
 

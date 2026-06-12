@@ -1,5 +1,5 @@
 {
-  "name": "opencode-autogoal",
+  "name": "@fuhongtao1010/opencode-autogoal",
   "version": "1.0.0",
   "description": "Autonomous goal-driven agent plugin for OpenCode with budget control, lifecycle management, and independent verification",
   "main": "./src/index.ts",

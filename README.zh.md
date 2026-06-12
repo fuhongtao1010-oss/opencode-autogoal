@@ -16,20 +16,19 @@
 
 ## 安装
 
+本地安装（推荐）：
+
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-autogoal"]
+  "plugin": ["/path/to/opencode-goal-plugin"]
 }
 ```
 
-或命令行安装：
+或从 GitHub 安装：
 
-```bash
-opencode plugin opencode-autogoal
 ```
-
-OpenCode 下次启动时自动安装。
+opencode plugin https://github.com/fuhongtao1010-oss/opencode-autogoal
+```
 
 ## 使用
 
